@@ -12,33 +12,65 @@ namespace Casocket
         private readonly ClientConfig _config;
         private readonly ClientWebSocket _socket;
         private readonly UTF8Encoding _encoder;
+        private readonly Scheduler _scheduler;
 
         private readonly ConcurrentQueue<byte[]> _bufferQueue;
+        
+        private int _attempts;
 
         public CasocketClient(ClientConfig config)
         { 
             _config = config;
             _socket = new ClientWebSocket();
             _encoder = new UTF8Encoding();
+            _scheduler = new Scheduler();
             _bufferQueue = new ConcurrentQueue<byte[]>();
         }
 
-        public Func<WebSocketMessage, Task> MessageReceived;
+        public Func<string, Task> MessageReceived;
 
-        internal Task InternalMessageReceived(WebSocketMessage message)
+        internal Task InternalMessageReceivedAsync(string message)
         {
             return MessageReceived is null ? Task.CompletedTask : MessageReceived.Invoke(message);
         }
 
+        public Func<string, Task> Log;
+
+        internal Task InternalLogAsync(string log)
+        {
+            return Log is null ? Task.CompletedTask : Log.Invoke(log);
+        }
+
         public async Task ConnectAsync()
         {
-            await _socket.ConnectAsync(_config.WebSocketAddress, CancellationToken.None);
+            do
+            {
+                if (_attempts == _config.ReconnectAttemps)
+                {
+                    await InternalLogAsync("Max number of connection attemps made");
+                    return;
+                }
+
+                try
+                {
+                    await _socket.ConnectAsync(_config.WebSocketAddress, CancellationToken.None);
+                }
+                catch (WebSocketException exception)
+                {
+                    _attempts++;
+                    await InternalLogAsync(exception.ToString());
+                }
+
+            } while (_socket.State == WebSocketState.None);
+
+            _attempts = 0;
+
             var tasks = Task.WhenAll(ListenAsync(), SendAsync());
 
             if (_config.ConnectionType == ConnectionType.Sequential)
                 await tasks;
-
-            Task.Run(async () => await tasks);
+            else
+                Task.Run(async () => await tasks);
         }
 
         private async Task ListenAsync()
@@ -58,28 +90,24 @@ namespace Casocket
                         if (result.EndOfMessage)
                         {
                             var builder = new StringBuilder();
-
-                            //no idea if this is the best/right way to do this
+                            
                             while (_bufferQueue.TryDequeue(out var qBuffer))
                             {
                                 builder.Append(_encoder.GetString(qBuffer));
                             }
 
-                            var message = new WebSocketMessage
-                            {
-                                Message = builder.ToString()
-                            };
-
-                            await InternalMessageReceived(message);
+                            await InternalMessageReceivedAsync(builder.ToString());
                         }
                         break;
                 }
+
+                await Task.Delay(_config.Delay);
             }
         }
 
         private async Task SendAsync()
         {
-
+            
         }
     }
 }

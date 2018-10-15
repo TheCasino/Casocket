@@ -10,6 +10,8 @@ namespace Casocket
         public int BufferSize { get; set; } = 1024;
         public int ReconnectAttemps { get; set; } = 5;
 
+        public TimeSpan Delay { get; set; }
+
         public TimeSpan TimeOut { get; set; } = TimeSpan.FromSeconds(45);
 
         public ConnectionType ConnectionType { get; set; } = ConnectionType.Sequential;
