@@ -24,6 +24,7 @@ namespace Casocket
             _socket = new ClientWebSocket();
             _encoder = new UTF8Encoding();
             _scheduler = new Scheduler();
+            _scheduler.Payload += SendAsync;
             _bufferQueue = new ConcurrentQueue<byte[]>();
         }
 
@@ -65,12 +66,12 @@ namespace Casocket
 
             _attempts = 0;
 
-            var tasks = Task.WhenAll(ListenAsync(), SendAsync());
+            var task = ListenAsync();
 
             if (_config.ConnectionType == ConnectionType.Sequential)
-                await tasks;
+                await task;
             else
-                Task.Run(async () => await tasks);
+                Task.Run(async () => await task);
         }
 
         private async Task ListenAsync()
@@ -105,9 +106,17 @@ namespace Casocket
             }
         }
 
-        private async Task SendAsync()
+        public void QueuePayload(Payload payload)
         {
-            
+            _scheduler.Enqueue(payload);
+        }
+
+        private async Task SendAsync(Payload payload)
+        {
+            var buffer = payload.Data;
+
+            await _socket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true,
+                CancellationToken.None);
         }
     }
 }
