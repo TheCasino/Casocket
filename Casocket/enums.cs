@@ -5,4 +5,10 @@
         Parallel,
         Sequential
     }
+
+    public enum LogType
+    {
+        Exception,
+        Message
+    }
 }

@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace Casocket
 {
-    public class CasocketClient
+    public partial class CasocketClient : IDisposable
     {
         private readonly ClientConfig _config;
         private readonly ClientWebSocket _socket;
@@ -28,27 +28,17 @@ namespace Casocket
             _bufferQueue = new ConcurrentQueue<byte[]>();
         }
 
-        public Func<string, Task> MessageReceived;
-
-        internal Task InternalMessageReceivedAsync(string message)
-        {
-            return MessageReceived is null ? Task.CompletedTask : MessageReceived.Invoke(message);
-        }
-
-        public Func<string, Task> Log;
-
-        internal Task InternalLogAsync(string log)
-        {
-            return Log is null ? Task.CompletedTask : Log.Invoke(log);
-        }
-
         public async Task ConnectAsync()
         {
             do
             {
                 if (_attempts == _config.ReconnectAttemps)
                 {
-                    await InternalLogAsync("Max number of connection attemps made");
+                    await InternalLogAsync(new LogMessage
+                    {
+                        Type = LogType.Message,
+                        Message = "Max amount of connection attemps made"
+                    });
                     return;
                 }
 
@@ -59,12 +49,18 @@ namespace Casocket
                 catch (WebSocketException exception)
                 {
                     _attempts++;
-                    await InternalLogAsync(exception.ToString());
+                    await InternalLogAsync(new LogMessage
+                    {
+                        Type = LogType.Exception,
+                        Message = exception.ToString()
+                    });
                 }
 
             } while (_socket.State == WebSocketState.None);
 
             _attempts = 0;
+
+            Task.Run(async () => await StateMonitor());
 
             var task = ListenAsync();
 
@@ -74,49 +70,105 @@ namespace Casocket
                 Task.Run(async () => await task);
         }
 
+        private async Task StateMonitor()
+        {
+            var lastState = WebSocketState.None;
+
+            while (true)
+            {
+                if (_socket.State != lastState && _socket.State == WebSocketState.Closed)
+                {
+                    await InternalSocketClosedAsync(_socket.CloseStatus, _socket.CloseStatusDescription);
+                }
+
+                lastState = _socket.State;
+
+                await Task.Delay(100);
+            }
+        }
+
         private async Task ListenAsync()
         {
             while (_socket.State == WebSocketState.Open)
             {
-                var buffer = new byte[_config.BufferSize];
-                var result = await _socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-
-                switch (result.MessageType)
+                try
                 {
-                    case WebSocketMessageType.Text:
-                        var trimmedBuffer = buffer.TrimEnd(result.Count);
+                    var buffer = new byte[_config.BufferSize];
+                    var result = await _socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
 
-                        _bufferQueue.Enqueue(trimmedBuffer);
+                    switch (result.MessageType)
+                    {
+                        case WebSocketMessageType.Text:
+                            var trimmedBuffer = buffer.TrimEnd(result.Count);
 
-                        if (result.EndOfMessage)
-                        {
-                            var builder = new StringBuilder();
-                            
-                            while (_bufferQueue.TryDequeue(out var qBuffer))
+                            _bufferQueue.Enqueue(trimmedBuffer);
+
+                            if (result.EndOfMessage)
                             {
-                                builder.Append(_encoder.GetString(qBuffer));
+                                var builder = new StringBuilder();
+
+                                while (_bufferQueue.TryDequeue(out var qBuffer))
+                                {
+                                    builder.Append(_encoder.GetString(qBuffer));
+                                }
+
+                                await InternalMessageReceivedAsync(builder.ToString());
                             }
 
-                            await InternalMessageReceivedAsync(builder.ToString());
-                        }
-                        break;
+                            break;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    await InternalLogAsync(new LogMessage
+                    {
+                        Type = LogType.Exception,
+                        Message = exception.ToString()
+                    });
                 }
 
                 await Task.Delay(_config.Delay);
             }
         }
 
-        public void QueuePayload(Payload payload)
+        public async Task QueuePayloadAsync(Payload payload)
         {
+            if (_socket.State != WebSocketState.Open)
+            {
+                await InternalLogAsync(new LogMessage
+                {
+                    Type = LogType.Message,
+                    Message = "The websocket must be open to send a payload"
+                });
+                return;
+            }
+
             _scheduler.Enqueue(payload);
         }
 
         private async Task SendAsync(Payload payload)
         {
-            var buffer = payload.Data;
+            //TODO split this based on buffer
+            try
+            {
+                var buffer = payload.Data;
 
-            await _socket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true,
-                CancellationToken.None);
+                await _socket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true,
+                    CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                await InternalLogAsync(new LogMessage
+                {
+                    Type = LogType.Exception,
+                    Message = exception.ToString()
+                });
+            }
+        }
+
+        public void Dispose()
+        {
+            _socket?.Dispose();
         }
     }
 }
