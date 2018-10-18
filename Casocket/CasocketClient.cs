@@ -44,7 +44,7 @@ namespace Casocket
 
                 try
                 {
-                    await _socket.ConnectAsync(_config.WebSocketAddress, CancellationToken.None);
+                    await _socket.ConnectAsync(_config.WebSocketAddress, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (WebSocketException exception)
                 {
@@ -60,14 +60,14 @@ namespace Casocket
 
             _attempts = 0;
 
-            Task.Run(async () => await StateMonitor());
+            Task.Run(async () => await StateMonitor().ConfigureAwait(false));
 
             var task = ListenAsync();
 
             if (_config.ConnectionType == ConnectionType.Sequential)
-                await task;
+                await task.ConfigureAwait(false);
             else
-                Task.Run(async () => await task);
+                Task.Run(async () => await task.ConfigureAwait(false));
         }
 
         private async Task StateMonitor()
@@ -78,12 +78,12 @@ namespace Casocket
             {
                 if (_socket.State != lastState && _socket.State == WebSocketState.Closed)
                 {
-                    await InternalSocketClosedAsync(_socket.CloseStatus, _socket.CloseStatusDescription);
+                    await InternalSocketClosedAsync(_socket.CloseStatus, _socket.CloseStatusDescription).ConfigureAwait(false);
                 }
 
                 lastState = _socket.State;
 
-                await Task.Delay(100);
+                await Task.Delay(100).ConfigureAwait(false);
             }
         }
 
@@ -94,7 +94,7 @@ namespace Casocket
                 try
                 {
                     var buffer = new byte[_config.BufferSize];
-                    var result = await _socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    var result = await _socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).ConfigureAwait(false);
 
                     switch (result.MessageType)
                     {
@@ -112,7 +112,7 @@ namespace Casocket
                                     builder.Append(_encoder.GetString(qBuffer));
                                 }
 
-                                await InternalMessageReceivedAsync(builder.ToString());
+                                await InternalMessageReceivedAsync(builder.ToString()).ConfigureAwait(false);
                             }
 
                             break;
@@ -124,10 +124,10 @@ namespace Casocket
                     {
                         Type = LogType.Exception,
                         Message = exception.ToString()
-                    });
+                    }).ConfigureAwait(false);
                 }
 
-                await Task.Delay(_config.Delay);
+                await Task.Delay(_config.Delay).ConfigureAwait(false);
             }
         }
 
@@ -139,7 +139,7 @@ namespace Casocket
                 {
                     Type = LogType.Message,
                     Message = "The websocket must be open to send a payload"
-                });
+                }).ConfigureAwait(false);
                 return;
             }
 
@@ -154,7 +154,7 @@ namespace Casocket
                 var buffer = payload.Data;
 
                 await _socket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true,
-                    CancellationToken.None);
+                    CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
@@ -162,7 +162,7 @@ namespace Casocket
                 {
                     Type = LogType.Exception,
                     Message = exception.ToString()
-                });
+                }).ConfigureAwait(false);
             }
         }
 
